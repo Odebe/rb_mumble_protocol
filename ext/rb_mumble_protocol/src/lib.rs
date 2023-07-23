@@ -1,6 +1,11 @@
 use std::cell::RefCell;
 
-use magnus::{class, define_module, method, function, prelude::*, Error, RHash};
+use magnus::{
+    class, define_module,
+    method, function, prelude::*,
+    Error, RHash,
+    value::{QTRUE, QFALSE}, Value
+};
 
 use bytes::BytesMut;
 
@@ -66,13 +71,17 @@ impl CryptStateRef {
         buffer.to_vec()
     }
 
-    pub fn decrypt(&self, encrypted: Vec<u8>) -> Vec<u8> {
+    pub fn decrypt(&self, encrypted: Vec<u8>) -> (Value, Vec<u8>) {
         let mut buffer = BytesMut::new();
         buffer.extend_from_slice(&encrypted);
 
-        self.0.try_borrow_mut().unwrap().decrypt(&mut buffer).unwrap();
+        let result = self.0.try_borrow_mut().unwrap().decrypt(&mut buffer);
 
-        buffer.to_vec()
+        // TODO: raise error
+        match result {
+            Ok(_)  => (*QTRUE, buffer.to_vec()),
+            Err(_) => (*QFALSE, vec![]),
+        }
     }
 }
 
