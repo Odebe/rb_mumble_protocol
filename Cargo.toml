@@ -4,4 +4,4 @@
 
 [workspace]
 members = ["./ext/rb_mumble_protocol"]
-# resolver = "2"
+resolver = "1"
