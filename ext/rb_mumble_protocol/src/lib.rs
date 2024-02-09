@@ -3,15 +3,31 @@ use std::cell::RefCell;
 use magnus::{
     class, define_module,
     method, function, prelude::*,
-    Error, RHash,
-    value::{QTRUE, QFALSE}, Value
+    Error, RHash, RModule, Ruby,
+    value::{Lazy},
+    exception::ExceptionClass,
+    gc::register_mark_object,
 };
 
 use bytes::BytesMut;
 
+static BASE_ERROR: Lazy<ExceptionClass> = Lazy::new(|ruby| {
+    let ex = ruby
+        .class_object()
+        .const_get::<_, RModule>("RbMumbleProtocol")
+        .unwrap()
+        .const_get("Error")
+        .unwrap();
+
+    // ensure `ex` is never garbage collected (e.g. if constant is
+    // redefined) and also not moved under compacting GC.
+    register_mark_object(ex);
+    ex
+});
+
 pub mod crypt_state;
 
-#[magnus::wrap(class = "RbMumbleProtocol::CryptState", free_immediatly, size)]
+#[magnus::wrap(class = "RbMumbleProtocol::CryptState")]
 struct CryptStateRef(RefCell<crypt_state::CryptState>);
 
 impl CryptStateRef {
@@ -48,41 +64,86 @@ impl CryptStateRef {
         Self(RefCell::new(new_state))
     }
 
-    pub fn key(&self) -> Vec<u8> { self.0.try_borrow_mut().unwrap().get_key().to_vec() }
-    pub fn encrypt_nonce(&self) -> Vec<u8> { self.0.try_borrow_mut().unwrap().get_encrypt_nonce().to_vec() }
-    pub fn decrypt_nonce(&self) -> Vec<u8> { self.0.try_borrow_mut().unwrap().get_decrypt_nonce().to_vec() }
-
-    pub fn stats(&self) -> RHash {
-        let hash = RHash::new();
-        let state = self.0.try_borrow_mut().unwrap();
-
-        let _ = hash.aset("good", state.get_good());
-        let _ = hash.aset("late", state.get_late());
-        let _ = hash.aset("lost", state.get_lost());
-
-        hash
-    }
-
-    pub fn encrypt(&self, src: Vec<u8>) -> Vec<u8> {
-        let mut buffer = BytesMut::new();
-
-        self.0.try_borrow_mut().unwrap().encrypt(src, &mut buffer);
-
-        buffer.to_vec()
-    }
-
-    pub fn decrypt(&self, encrypted: Vec<u8>) -> (Value, Vec<u8>) {
-        let mut buffer = BytesMut::new();
-        buffer.extend_from_slice(&encrypted);
-
-        let result = self.0.try_borrow_mut().unwrap().decrypt(&mut buffer);
-
-        // TODO: raise error
-        match result {
-            Ok(_)  => (*QTRUE, buffer.to_vec()),
-            Err(_) => (*QFALSE, vec![]),
+    pub fn key(&self) -> Result<Vec<u8>, Error> {
+        match self.0.try_borrow() {
+            Ok(ref_) => { Ok(ref_.get_key().to_vec()) },
+            Err(_e) => { Err(Error::new(get_ruby().get_inner(&BASE_ERROR), "borrow error")) }
         }
     }
+
+    pub fn encrypt_nonce(&self) -> Result<Vec<u8>, Error> {
+        match self.0.try_borrow() {
+            Ok(ref_) => { Ok(ref_.get_encrypt_nonce().to_vec()) },
+            Err(_e) => { Err(Error::new(get_ruby().get_inner(&BASE_ERROR), "borrow error")) }
+        }
+    }
+
+    pub fn decrypt_nonce(&self) -> Result<Vec<u8>, Error> {
+        match self.0.try_borrow() {
+            Ok(ref_) => { Ok(ref_.get_decrypt_nonce().to_vec()) },
+            Err(_e) => { Err(Error::new(get_ruby().get_inner(&BASE_ERROR), "borrow error")) }
+        }
+    }
+
+    pub fn stats(&self) -> Result<RHash, Error> {
+        match self.0.try_borrow() {
+            Ok(state) => {
+                let hash = RHash::new();
+
+                let _ = hash.aset("good", state.get_good());
+                let _ = hash.aset("late", state.get_late());
+                let _ = hash.aset("lost", state.get_lost());
+
+                Ok(hash)
+            },
+            Err(_e) => {
+                Err(Error::new(get_ruby().get_inner(&BASE_ERROR), "borrow error"))
+            }
+        }
+    }
+
+    pub fn encrypt(&self, src: Vec<u8>) -> Result<Vec<u8>, Error> {
+        match self.0.try_borrow_mut() {
+            Ok(mut state) => {
+                let mut buffer = BytesMut::new();
+                state.encrypt(src, &mut buffer);
+
+                Ok(buffer.to_vec())
+            },
+            Err(_e) => { Err(Error::new(get_ruby().get_inner(&BASE_ERROR), "borrow error")) }
+        }
+    }
+
+    pub fn decrypt(&self, encrypted: Vec<u8>) -> Result<Vec<u8>, Error> {
+        match self.0.try_borrow_mut() {
+            Ok(mut state) => {
+                let mut buffer = BytesMut::new();
+                buffer.extend_from_slice(&encrypted);
+
+                match state.decrypt(&mut buffer) {
+                    Ok(_) => Ok(buffer.to_vec()),
+                    Err(crypt_state::DecryptError::Repeat) => {
+                        Err(Error::new(get_ruby().get_inner(&BASE_ERROR), "DecryptError::Repeat"))
+                    },
+                    Err(crypt_state::DecryptError::Late) => {
+                        Err(Error::new(get_ruby().get_inner(&BASE_ERROR), "DecryptError::Late"))
+                    },
+                    Err(crypt_state::DecryptError::Mac) => {
+                        Err(Error::new(get_ruby().get_inner(&BASE_ERROR), "DecryptError::Mac"))
+                    },
+                    Err(crypt_state::DecryptError::Eof) => {
+                        Err(Error::new(get_ruby().get_inner(&BASE_ERROR), "DecryptError::Eof"))
+                    }
+                }
+            },
+            Err(_e) => { Err(Error::new(get_ruby().get_inner(&BASE_ERROR), "borrow error")) }
+        }
+    }
+}
+
+#[inline]
+fn get_ruby() -> Ruby {
+    unsafe { Ruby::get_unchecked() }
 }
 
 #[magnus::init]
@@ -102,21 +163,4 @@ fn init() -> Result<(), Error> {
     class.define_method("decrypt", method!(CryptStateRef::decrypt, 1))?;
 
     Ok(())
-}
-
-#[test]
-fn encrypt_and_decrypt_are_inverse() {
-    let server_state = CryptStateRef::new();
-    // swap nonce vectors side to side
-    let client_state = CryptStateRef::new_from(
-        server_state.key(),
-        server_state.decrypt_nonce(),
-        server_state.encrypt_nonce()
-    );
-
-    let src= "test".as_bytes().to_vec();
-    let encrypted= server_state.encrypt(src.clone());
-    let result= client_state.decrypt(encrypted.clone());
-
-    assert_eq!(src, result);
 }

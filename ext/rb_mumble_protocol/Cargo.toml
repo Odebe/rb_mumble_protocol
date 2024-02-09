@@ -1,6 +1,6 @@
 [package]
 name = "rb_mumble_protocol"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Mikhail Odebe <derpiranha@gmail.com>"]
 publish = false
@@ -9,6 +9,6 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-magnus = { version = "0.4" }
+magnus = { version = "0.6" }
 bytes = "1.0"
 openssl = { version = "0.10" }

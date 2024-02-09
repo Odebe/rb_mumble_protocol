@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "rb_mumble_protocol"
+require 'byebug'
 
 RSpec.configure do |config|
   # Enable flags like --only-failures and --next-failure
