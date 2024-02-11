@@ -26,6 +26,42 @@ RSpec.describe RbMumbleProtocol do
       it { expect(decrypted.data).to eq(bytes) }
     end
 
+    describe 'interface' do
+      methods = %i[
+        encrypt_nonce
+        decrypt_nonce
+        encrypt
+        decrypt
+        set_decrypt_nonce
+        stats
+      ].freeze
+
+      methods.each do |method_name|
+        describe "##{method_name}" do
+          it { expect(server_state).to respond_to(method_name) }
+        end
+      end
+    end
+
+    describe "#set_decrypt_nonce" do
+      context "with correct nonce" do
+        before do
+          server_state.set_decrypt_nonce(server_state.encrypt_nonce)
+        end
+
+        it "changes decrypt nonce" do
+          expect(server_state.encrypt_nonce).to eq(server_state.decrypt_nonce)
+        end
+      end
+
+      context 'with incorrect nonce' do
+        it 'raises error' do
+          expect { server_state.set_decrypt_nonce([1, 2, 3, 4]) }
+            .to raise_error(RbMumbleProtocol::Error, "Expected a Decrypt nonce of length 16")
+        end
+      end
+    end
+
     describe "errors" do
       let(:result) { client_state.decrypt(encrypted) }
 

@@ -110,6 +110,23 @@ impl CryptStateRef {
         Self(RefCell::new(new_state))
     }
 
+    pub fn set_decrypt_nonce(&self, nonce: Vec<u8>) -> Result<(), Error> {
+        match self.0.try_borrow_mut() {
+            Ok(mut ref_) => {
+                match &nonce.clone().try_into() {
+                    Ok(array) => Ok(ref_.set_decrypt_nonce(array)),
+                    Err(_e) => {
+                        let msg = format!("Expected a Decrypt nonce of length {}", 16);
+                        let err = Error::new(get_ruby().get_inner(&BASE_ERROR), msg);
+
+                        Err(err)
+                    }
+                }
+            },
+            Err(_e) => { Err(Error::new(get_ruby().get_inner(&BASE_ERROR), "borrow error")) }
+        }
+    }
+
     pub fn key(&self) -> Result<Vec<u8>, Error> {
         match self.0.try_borrow() {
             Ok(ref_) => { Ok(ref_.get_key().to_vec()) },
@@ -191,6 +208,7 @@ fn init() -> Result<(), Error> {
     class1.define_method("encrypt_nonce", method!(CryptStateRef::encrypt_nonce, 0))?;
     class1.define_method("decrypt_nonce", method!(CryptStateRef::decrypt_nonce, 0))?;
     class1.define_method("stats", method!(CryptStateRef::stats, 0))?;
+    class1.define_method("set_decrypt_nonce", method!(CryptStateRef::set_decrypt_nonce, 1))?;
 
     class1.define_method("encrypt", method!(CryptStateRef::encrypt, 1))?;
     class1.define_method("decrypt", method!(CryptStateRef::decrypt, 1))?;
