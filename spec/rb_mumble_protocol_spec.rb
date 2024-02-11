@@ -22,10 +22,13 @@ RSpec.describe RbMumbleProtocol do
       let(:encrypted) { server_state.encrypt(bytes) }
       let(:decrypted) { client_state.decrypt(encrypted) }
 
-      it { expect(decrypted).to eq(bytes) }
+      it { expect(decrypted.success?).to be_truthy }
+      it { expect(decrypted.data).to eq(bytes) }
     end
 
     describe "errors" do
+      let(:result) { client_state.decrypt(encrypted) }
+
       context "when repeat" do
         let(:encrypted) { server_state.encrypt(bytes) }
 
@@ -33,31 +36,34 @@ RSpec.describe RbMumbleProtocol do
           client_state.decrypt(encrypted)
         end
 
-        it "raises error" do
-          expect { client_state.decrypt(encrypted) }.to raise_error(RbMumbleProtocol::Error, "DecryptError::Repeat")
+        it "fails" do
+          expect(result).to have_attributes('success?': false, reason: :repeat)
         end
       end
 
       context "when late" do
+        let(:result) { client_state.decrypt(@first_message) }
+
         before do
           @first_message = server_state.encrypt(bytes)
           31.times { server_state.encrypt(bytes) }
         end
 
-        it "raises error" do
-          expect { client_state.decrypt(@first_message) }.to raise_error(RbMumbleProtocol::Error, "DecryptError::Late")
+        it "fails" do
+          expect(result).to have_attributes('success?': false, reason: :late)
         end
       end
 
       context "when encrypted is too short (< 4)" do
         let(:encrypted) { [1, 2, 3] }
 
-        it "raises error" do
-          expect { client_state.decrypt(encrypted)}.to raise_error(RbMumbleProtocol::Error, "DecryptError::Eof")
+        it "fails" do
+          expect(result).to have_attributes('success?': false, reason: :eof)
         end
       end
 
       context "when crypto-attack" do
+
         let(:encrypted) do
           value = server_state.encrypt(bytes)
           # custom header from attacker
@@ -68,7 +74,7 @@ RSpec.describe RbMumbleProtocol do
         end
 
         it "raises error" do
-          expect { client_state.decrypt(encrypted) }.to raise_error(RbMumbleProtocol::Error, "DecryptError::Mac")
+          expect(result).to have_attributes('success?': false, reason: :mac)
         end
       end
     end

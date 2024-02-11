@@ -27,8 +27,54 @@ static BASE_ERROR: Lazy<ExceptionClass> = Lazy::new(|ruby| {
 
 pub mod crypt_state;
 
-#[magnus::wrap(class = "RbMumbleProtocol::CryptState")]
+use crypt_state::{DecryptError};
+
+impl Into<u8> for DecryptError {
+    fn into(self: DecryptError) -> u8 {
+        match self {
+            DecryptError::Repeat => 1,
+            DecryptError::Late => 2,
+            DecryptError::Mac => 3,
+            DecryptError::Eof => 4
+        }
+    }
+}
+
+#[magnus::wrap(class = "RbMumbleProtocol::CryptState", size)]
 struct CryptStateRef(RefCell<crypt_state::CryptState>);
+
+#[magnus::wrap(class = "RbMumbleProtocol::DecryptResult", free_immediately, size)]
+struct DecryptResult {
+    buffer: RefCell<Vec<u8>>,
+    reason_raw: u8
+}
+
+impl DecryptResult {
+    pub fn new(buffer: Vec<u8>, result: Result<(), DecryptError>) -> Self {
+        let reason_raw =
+            match result {
+                Ok(()) => 0,
+                Err(e) => e.into()
+            };
+
+        Self {
+            buffer: RefCell::new(buffer),
+            reason_raw: reason_raw.into()
+        }
+    }
+
+    pub fn is_success(&self) -> bool {
+        self.reason_raw == 0
+    }
+
+    pub fn data(&self) -> Vec<u8> {
+        self.buffer.borrow().to_vec()
+    }
+
+    pub fn reason_raw_value(&self) -> u8 {
+        self.reason_raw
+    }
+}
 
 impl CryptStateRef {
     pub fn new() -> Self {
@@ -114,27 +160,14 @@ impl CryptStateRef {
         }
     }
 
-    pub fn decrypt(&self, encrypted: Vec<u8>) -> Result<Vec<u8>, Error> {
+    pub fn decrypt(&self, encrypted: Vec<u8>) -> Result<DecryptResult, Error> {
         match self.0.try_borrow_mut() {
             Ok(mut state) => {
                 let mut buffer = BytesMut::new();
                 buffer.extend_from_slice(&encrypted);
+                let result = state.decrypt(&mut buffer);
 
-                match state.decrypt(&mut buffer) {
-                    Ok(_) => Ok(buffer.to_vec()),
-                    Err(crypt_state::DecryptError::Repeat) => {
-                        Err(Error::new(get_ruby().get_inner(&BASE_ERROR), "DecryptError::Repeat"))
-                    },
-                    Err(crypt_state::DecryptError::Late) => {
-                        Err(Error::new(get_ruby().get_inner(&BASE_ERROR), "DecryptError::Late"))
-                    },
-                    Err(crypt_state::DecryptError::Mac) => {
-                        Err(Error::new(get_ruby().get_inner(&BASE_ERROR), "DecryptError::Mac"))
-                    },
-                    Err(crypt_state::DecryptError::Eof) => {
-                        Err(Error::new(get_ruby().get_inner(&BASE_ERROR), "DecryptError::Eof"))
-                    }
-                }
+                Ok(DecryptResult::new(buffer.to_vec(), result))
             },
             Err(_e) => { Err(Error::new(get_ruby().get_inner(&BASE_ERROR), "borrow error")) }
         }
@@ -149,18 +182,23 @@ fn get_ruby() -> Ruby {
 #[magnus::init]
 fn init() -> Result<(), Error> {
     let module = define_module("RbMumbleProtocol")?;
-    let class = module.define_class("CryptState", class::object())?;
+    let class1 = module.define_class("CryptState", class::object())?;
 
-    class.define_singleton_method("new", function!(CryptStateRef::new, 0))?;
-    class.define_singleton_method("new_from", function!(CryptStateRef::new_from, 3))?;
+    class1.define_singleton_method("new", function!(CryptStateRef::new, 0))?;
+    class1.define_singleton_method("new_from", function!(CryptStateRef::new_from, 3))?;
 
-    class.define_method("key", method!(CryptStateRef::key, 0))?;
-    class.define_method("encrypt_nonce", method!(CryptStateRef::encrypt_nonce, 0))?;
-    class.define_method("decrypt_nonce", method!(CryptStateRef::decrypt_nonce, 0))?;
-    class.define_method("stats", method!(CryptStateRef::stats, 0))?;
+    class1.define_method("key", method!(CryptStateRef::key, 0))?;
+    class1.define_method("encrypt_nonce", method!(CryptStateRef::encrypt_nonce, 0))?;
+    class1.define_method("decrypt_nonce", method!(CryptStateRef::decrypt_nonce, 0))?;
+    class1.define_method("stats", method!(CryptStateRef::stats, 0))?;
 
-    class.define_method("encrypt", method!(CryptStateRef::encrypt, 1))?;
-    class.define_method("decrypt", method!(CryptStateRef::decrypt, 1))?;
+    class1.define_method("encrypt", method!(CryptStateRef::encrypt, 1))?;
+    class1.define_method("decrypt", method!(CryptStateRef::decrypt, 1))?;
+
+    let class2 = module.define_class("DecryptResult", class::object())?;
+    class2.define_method("success?", method!(DecryptResult::is_success, 0))?;
+    class2.define_method("data", method!(DecryptResult::data, 0))?;
+    class2.define_method("reason_raw_value", method!(DecryptResult::reason_raw_value, 0))?;
 
     Ok(())
 }

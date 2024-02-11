@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    rb_mumble_protocol (0.2.1)
+    rb_mumble_protocol (0.3.0)
 
 GEM
   remote: https://rubygems.org/

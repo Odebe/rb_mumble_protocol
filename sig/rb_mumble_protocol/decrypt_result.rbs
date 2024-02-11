@@ -1,0 +1,7 @@
+module RbMumbleProtocol
+  class DecryptResult
+    REASONS: Hash[Integer, Symbol]
+
+    def reason: -> Symbol
+  end
+end
