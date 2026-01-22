@@ -21,14 +21,21 @@ pub const BLOCK_SIZE: usize = std::mem::size_of::<u128>();
 /// software. See: http://web.cs.ucdavis.edu/~rogaway/ocb/license.htm
 ///
 /// Based on https://github.com/mumble-voip/mumble/blob/e31d267a11b4ed0597ad41309a7f6b715837141f/src/CryptState.cpp
-#[derive(Debug)]
+
+struct DecryptHistory([u8; 0x100]);
+
+impl Default for DecryptHistory {
+    fn default() -> Self { DecryptHistory([0; 0x100]) }
+}
+
+#[derive(Default)]
 pub struct CryptState {
     key: [u8; KEY_SIZE],
 
     // internally as native endianness, externally as little endian and during ocb_* as big endian
     encrypt_nonce: u128,
     decrypt_nonce: u128,
-    decrypt_history: [u8; 0x100],
+    decrypt_history: DecryptHistory,
 
     good: u32,
     late: u32,
@@ -61,7 +68,7 @@ impl CryptState {
 
             encrypt_nonce: 0,
             decrypt_nonce: 1 << 127,
-            decrypt_history: [0; 0x100],
+            decrypt_history: DecryptHistory([0; 0x100]),
 
             good: 0,
             late: 0,
@@ -75,7 +82,7 @@ impl CryptState {
 
             encrypt_nonce: self.encrypt_nonce.clone(),
             decrypt_nonce: self.decrypt_nonce.clone(),
-            decrypt_history: [0; 0x100],
+            decrypt_history: DecryptHistory([0; 0x100]),
 
             good: 0,
             late: 0,
@@ -94,7 +101,7 @@ impl CryptState {
 
             encrypt_nonce: u128::from_le_bytes(encrypt_nonce),
             decrypt_nonce: u128::from_le_bytes(decrypt_nonce),
-            decrypt_history: [0; 0x100],
+            decrypt_history: DecryptHistory([0; 0x100]),
 
             good: 0,
             late: 0,
@@ -182,7 +189,7 @@ impl CryptState {
             if diff > 0 {
                 lost = i32::from(diff - 1); // lost a few packets in between this and the last one
             } else if diff > -30 {
-                if self.decrypt_history[nonce_0 as usize] == (self.decrypt_nonce >> 8) as u8 {
+                if self.decrypt_history.0[nonce_0 as usize] == (self.decrypt_nonce >> 8) as u8 {
                     self.decrypt_nonce = saved_nonce;
                     return Err(DecryptError::Repeat);
                 }
@@ -201,7 +208,7 @@ impl CryptState {
             return Err(DecryptError::Mac);
         }
 
-        self.decrypt_history[nonce_0 as usize] = (self.decrypt_nonce >> 8) as u8;
+        self.decrypt_history.0[nonce_0 as usize] = (self.decrypt_nonce >> 8) as u8;
 
         self.good += 1;
         if late {

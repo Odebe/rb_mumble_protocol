@@ -1,12 +1,14 @@
 use std::cell::RefCell;
 
 use magnus::{
-    class, define_module,
     method, function, prelude::*,
-    Error, RHash, RModule, Ruby,
+    Error, RHash,
+    RClass, RModule, Ruby, Value,
     value::{Lazy},
     exception::ExceptionClass,
     gc::register_mark_object,
+    scan_args::{get_kwargs, scan_args},
+    typed_data
 };
 
 use bytes::BytesMut;
@@ -40,8 +42,11 @@ impl Into<u8> for DecryptError {
     }
 }
 
-#[magnus::wrap(class = "RbMumbleProtocol::CryptState", size)]
-struct CryptStateRef(RefCell<crypt_state::CryptState>);
+#[magnus::wrap(class = "RbMumbleProtocol::CryptState", name = "Rust CryptState wrapper", free_immediately, size)]
+#[derive(Default)]
+struct CryptStateRef {
+  state: RefCell<crypt_state::CryptState>
+}
 
 #[magnus::wrap(class = "RbMumbleProtocol::DecryptResult", free_immediately, size)]
 struct DecryptResult {
@@ -77,41 +82,67 @@ impl DecryptResult {
 }
 
 impl CryptStateRef {
-    pub fn new() -> Self {
-        Self(RefCell::new(crypt_state::CryptState::generate_new()))
-    }
+//     pub fn new() -> Self {
+//         Self(RefCell::new(crypt_state::CryptState::generate_new()))
+//     }
 
-    pub fn new_from(
-        key: Vec<u8>,
-        encrypt_nonce: Vec<u8>,
-        decrypt_nonce: Vec<u8>,
-    ) -> Self {
-        let new_key =
-            key
-            .try_into()
-            .unwrap_or_else(|v: Vec<u8>| panic!("Expected a Key of length {} but it was {}", 16, v.len()));
+//     pub fn new_from(
+//         key: Vec<u8>,
+//         encrypt_nonce: Vec<u8>,
+//         decrypt_nonce: Vec<u8>,
+//     ) -> Self {
+//         let new_key =
+//             key
+//             .try_into()
+//             .unwrap_or_else(|v: Vec<u8>| panic!("Expected a Key of length {} but it was {}", 16, v.len()));
+//
+//         let new_encrypt_nonce =
+//             encrypt_nonce
+//             .try_into()
+//             .unwrap_or_else(|v: Vec<u8>| panic!("Expected a Encrypt nonce of length {} but it was {}", 16, v.len()));
+//
+//         let new_decrypt_nonce =
+//             decrypt_nonce
+//                 .try_into()
+//                 .unwrap_or_else(|v: Vec<u8>| panic!("Expected a Decrypt nonce of length {} but it was {}", 16, v.len()));
+//
+//         let new_state = crypt_state::CryptState::new_from(
+//             new_key,
+//             new_encrypt_nonce,
+//             new_decrypt_nonce
+//         );
+//
+//         Self(RefCell::new(new_state))
+//     }
 
-        let new_encrypt_nonce =
-            encrypt_nonce
-            .try_into()
-            .unwrap_or_else(|v: Vec<u8>| panic!("Expected a Encrypt nonce of length {} but it was {}", 16, v.len()));
+    fn initialize(
+      ruby: &Ruby,
+      rb_self: typed_data::Obj<Self>,
+      args: &[Value],
+    ) -> Result<(), Error> {
+      let args = scan_args::<(), (), (), (), _, ()>(args)?;
+      let kwargs = get_kwargs::<_, (), (Option<[u8; 16]>, Option<[u8; 16]>, Option<[u8; 16]>), ()>(
+          args.keywords,
+          &[],
+          &["key", "encrypt_nonce", "decrypt_nonce"],
+      )?;
 
-        let new_decrypt_nonce =
-            decrypt_nonce
-                .try_into()
-                .unwrap_or_else(|v: Vec<u8>| panic!("Expected a Decrypt nonce of length {} but it was {}", 16, v.len()));
+      *rb_self.state.borrow_mut() = match kwargs.optional {
+          (Some(key), Some(enc), Some(dec)) => crypt_state::CryptState::new_from(key, enc, dec),
+          (None, None, None) => crypt_state::CryptState::generate_new(),
+          _ => {
+              return Err(Error::new(
+                  ruby.exception_arg_error(),
+                  "Expected none kwargs, or all of: key, encrypt_nonce and decrypt_nonce",
+              ))
+          }
+      };
 
-        let new_state = crypt_state::CryptState::new_from(
-            new_key,
-            new_encrypt_nonce,
-            new_decrypt_nonce
-        );
-
-        Self(RefCell::new(new_state))
+      Ok(())
     }
 
     pub fn set_decrypt_nonce(&self, nonce: Vec<u8>) -> Result<(), Error> {
-        match self.0.try_borrow_mut() {
+        match self.state.try_borrow_mut() {
             Ok(mut ref_) => {
                 match &nonce.clone().try_into() {
                     Ok(array) => Ok(ref_.set_decrypt_nonce(array)),
@@ -128,30 +159,30 @@ impl CryptStateRef {
     }
 
     pub fn key(&self) -> Result<Vec<u8>, Error> {
-        match self.0.try_borrow() {
+        match self.state.try_borrow() {
             Ok(ref_) => { Ok(ref_.get_key().to_vec()) },
             Err(_e) => { Err(Error::new(get_ruby().get_inner(&BASE_ERROR), "borrow error")) }
         }
     }
 
     pub fn encrypt_nonce(&self) -> Result<Vec<u8>, Error> {
-        match self.0.try_borrow() {
+        match self.state.try_borrow() {
             Ok(ref_) => { Ok(ref_.get_encrypt_nonce().to_vec()) },
             Err(_e) => { Err(Error::new(get_ruby().get_inner(&BASE_ERROR), "borrow error")) }
         }
     }
 
     pub fn decrypt_nonce(&self) -> Result<Vec<u8>, Error> {
-        match self.0.try_borrow() {
+        match self.state.try_borrow() {
             Ok(ref_) => { Ok(ref_.get_decrypt_nonce().to_vec()) },
             Err(_e) => { Err(Error::new(get_ruby().get_inner(&BASE_ERROR), "borrow error")) }
         }
     }
 
     pub fn stats(&self) -> Result<RHash, Error> {
-        match self.0.try_borrow() {
+        match self.state.try_borrow() {
             Ok(state) => {
-                let hash = RHash::new();
+                let hash = Ruby::hash_new(&get_ruby());
 
                 let _ = hash.aset("good", state.get_good());
                 let _ = hash.aset("late", state.get_late());
@@ -166,7 +197,7 @@ impl CryptStateRef {
     }
 
     pub fn encrypt(&self, src: Vec<u8>) -> Result<Vec<u8>, Error> {
-        match self.0.try_borrow_mut() {
+        match self.state.try_borrow_mut() {
             Ok(mut state) => {
                 let mut buffer = BytesMut::new();
                 state.encrypt(src, &mut buffer);
@@ -178,7 +209,7 @@ impl CryptStateRef {
     }
 
     pub fn decrypt(&self, encrypted: Vec<u8>) -> Result<DecryptResult, Error> {
-        match self.0.try_borrow_mut() {
+        match self.state.try_borrow_mut() {
             Ok(mut state) => {
                 let mut buffer = BytesMut::new();
                 buffer.extend_from_slice(&encrypted);
@@ -197,12 +228,15 @@ fn get_ruby() -> Ruby {
 }
 
 #[magnus::init]
-fn init() -> Result<(), Error> {
-    let module = define_module("RbMumbleProtocol")?;
-    let class1 = module.define_class("CryptState", class::object())?;
+fn init(ruby: &Ruby) -> Result<(), Error> {
+    let module = ruby.class_object().const_get::<_, RModule>("RbMumbleProtocol").unwrap();
+    let class1 = module.const_get::<_, RClass>("CryptState").unwrap();
 
-    class1.define_singleton_method("new", function!(CryptStateRef::new, 0))?;
-    class1.define_singleton_method("new_from", function!(CryptStateRef::new_from, 3))?;
+//     class1.define_singleton_method("new", function!(CryptStateRef::new, 0))?;
+//     class1.define_singleton_method("new_from", function!(CryptStateRef::new_from, 3))?;
+
+    class1.define_alloc_func::<CryptStateRef>();
+    class1.define_method("initialize", method!(CryptStateRef::initialize, -1))?;
 
     class1.define_method("key", method!(CryptStateRef::key, 0))?;
     class1.define_method("encrypt_nonce", method!(CryptStateRef::encrypt_nonce, 0))?;
@@ -213,7 +247,7 @@ fn init() -> Result<(), Error> {
     class1.define_method("encrypt", method!(CryptStateRef::encrypt, 1))?;
     class1.define_method("decrypt", method!(CryptStateRef::decrypt, 1))?;
 
-    let class2 = module.define_class("DecryptResult", class::object())?;
+    let class2 = module.const_get::<_, RClass>("DecryptResult").unwrap();
     class2.define_method("success?", method!(DecryptResult::is_success, 0))?;
     class2.define_method("data", method!(DecryptResult::data, 0))?;
     class2.define_method("reason_raw_value", method!(DecryptResult::reason_raw_value, 0))?;

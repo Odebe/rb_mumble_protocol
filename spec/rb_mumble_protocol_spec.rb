@@ -9,11 +9,7 @@ RSpec.describe RbMumbleProtocol do
     let(:server_state) { RbMumbleProtocol::CryptState.new }
     let(:client_state) do
       # swap nonce vectors side to side
-      RbMumbleProtocol::CryptState.new_from(
-        server_state.key,
-        server_state.decrypt_nonce,
-        server_state.encrypt_nonce
-      )
+      RbMumbleProtocol::CryptState.new_from(server_state)
     end
 
     let(:bytes) { "test".bytes }
