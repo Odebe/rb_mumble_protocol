@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use magnus::{
-    method, function, prelude::*,
+    method, prelude::*,
     Error, RHash,
     RClass, RModule, Ruby, Value,
     value::{Lazy},
@@ -82,39 +82,6 @@ impl DecryptResult {
 }
 
 impl CryptStateRef {
-//     pub fn new() -> Self {
-//         Self(RefCell::new(crypt_state::CryptState::generate_new()))
-//     }
-
-//     pub fn new_from(
-//         key: Vec<u8>,
-//         encrypt_nonce: Vec<u8>,
-//         decrypt_nonce: Vec<u8>,
-//     ) -> Self {
-//         let new_key =
-//             key
-//             .try_into()
-//             .unwrap_or_else(|v: Vec<u8>| panic!("Expected a Key of length {} but it was {}", 16, v.len()));
-//
-//         let new_encrypt_nonce =
-//             encrypt_nonce
-//             .try_into()
-//             .unwrap_or_else(|v: Vec<u8>| panic!("Expected a Encrypt nonce of length {} but it was {}", 16, v.len()));
-//
-//         let new_decrypt_nonce =
-//             decrypt_nonce
-//                 .try_into()
-//                 .unwrap_or_else(|v: Vec<u8>| panic!("Expected a Decrypt nonce of length {} but it was {}", 16, v.len()));
-//
-//         let new_state = crypt_state::CryptState::new_from(
-//             new_key,
-//             new_encrypt_nonce,
-//             new_decrypt_nonce
-//         );
-//
-//         Self(RefCell::new(new_state))
-//     }
-
     fn initialize(
       ruby: &Ruby,
       rb_self: typed_data::Obj<Self>,
@@ -231,9 +198,6 @@ fn get_ruby() -> Ruby {
 fn init(ruby: &Ruby) -> Result<(), Error> {
     let module = ruby.class_object().const_get::<_, RModule>("RbMumbleProtocol").unwrap();
     let class1 = module.const_get::<_, RClass>("CryptState").unwrap();
-
-//     class1.define_singleton_method("new", function!(CryptStateRef::new, 0))?;
-//     class1.define_singleton_method("new_from", function!(CryptStateRef::new_from, 3))?;
 
     class1.define_alloc_func::<CryptStateRef>();
     class1.define_method("initialize", method!(CryptStateRef::initialize, -1))?;
