@@ -13,3 +13,8 @@ magnus = { version = "0.8" }
 bytes = "1.0"
 openssl = { version = "0.10" }
 rb-sys = { version = "0.9.124", features = ["global-allocator"] }
+
+[profile.release]
+lto = true         # Enable Link-Time Optimization
+opt-level = 3      # Maximum optimization level
+codegen-units = 1  # Slower to compile, but produces a smaller/faster binary
