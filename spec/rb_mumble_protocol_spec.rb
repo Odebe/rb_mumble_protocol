@@ -5,6 +5,13 @@ RSpec.describe RbMumbleProtocol do
     expect(RbMumbleProtocol::VERSION).not_to be nil
   end
 
+  shared_context "encryption helpers" do
+    let(:encrypted) { server_state.encrypt(bytes) }
+    let(:decrypted) { client_state.decrypt(encrypted) }
+    let(:decrypted_data) { decrypted[0] }
+    let(:decrypted_reason) { decrypted[1] }
+  end
+
   describe "use cases" do
     let(:server_state) { RbMumbleProtocol::CryptState.new }
     let(:client_state) do
@@ -12,14 +19,12 @@ RSpec.describe RbMumbleProtocol do
       RbMumbleProtocol::CryptState.new_from(server_state)
     end
 
-    let(:bytes) { "test".bytes }
+    let(:bytes) { "test" }
 
     describe "happy path" do
-      let(:encrypted) { server_state.encrypt(bytes) }
-      let(:decrypted) { client_state.decrypt(encrypted) }
+      include_context "encryption helpers"
 
-      it { expect(decrypted.success?).to be_truthy }
-      it { expect(decrypted.data).to eq(bytes) }
+      it { expect(decrypted_data).to eq(bytes) }
     end
 
     describe 'interface' do
@@ -59,7 +64,7 @@ RSpec.describe RbMumbleProtocol do
     end
 
     describe "errors" do
-      let(:result) { client_state.decrypt(encrypted) }
+      include_context "encryption helpers"
 
       context "when repeat" do
         let(:encrypted) { server_state.encrypt(bytes) }
@@ -69,12 +74,13 @@ RSpec.describe RbMumbleProtocol do
         end
 
         it "fails" do
-          expect(result).to have_attributes('success?': false, reason: :repeat)
+          expect(decrypted_reason).to eql(:repeat)
         end
       end
 
       context "when late" do
         let(:result) { client_state.decrypt(@first_message) }
+        let(:decrypted_reason) { result[1] }
 
         before do
           @first_message = server_state.encrypt(bytes)
@@ -82,31 +88,30 @@ RSpec.describe RbMumbleProtocol do
         end
 
         it "fails" do
-          expect(result).to have_attributes('success?': false, reason: :late)
+          expect(decrypted_reason).to eql(:late)
         end
       end
 
       context "when encrypted is too short (< 4)" do
-        let(:encrypted) { [1, 2, 3] }
+        let(:encrypted) { "tes" }
 
         it "fails" do
-          expect(result).to have_attributes('success?': false, reason: :eof)
+          expect(decrypted_reason).to eql(:eof)
         end
       end
 
       context "when crypto-attack" do
-
         let(:encrypted) do
           value = server_state.encrypt(bytes)
           # custom header from attacker
-          value[1] = 2
-          value[2] = 3
-          value[3] = 69
+          value[1] = 2.chr
+          value[2] = 3.chr
+          value[3] = 69.chr
           value
         end
 
         it "raises error" do
-          expect(result).to have_attributes('success?': false, reason: :mac)
+          expect(decrypted_reason).to eql(:bad_mac)
         end
       end
     end

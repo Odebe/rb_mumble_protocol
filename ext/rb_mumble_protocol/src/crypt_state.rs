@@ -145,7 +145,7 @@ impl CryptState {
     }
 
     /// Encrypts an encoded voice packet and returns the resulting bytes.
-    pub fn encrypt(&mut self, src: Vec<u8>, dst: &mut BytesMut) {
+    pub fn encrypt(&mut self, src: &[u8], dst: &mut BytesMut) {
         self.encrypt_nonce = self.encrypt_nonce.wrapping_add(1);
 
         // Leave four bytes for header
@@ -153,7 +153,7 @@ impl CryptState {
         let mut inner = dst.split_off(4);
 
         // Copy source bytes
-        inner.extend_from_slice(&src);
+        inner.extend_from_slice(src);
 
         // Encryption
         let tag = self.ocb_encrypt(inner.as_mut());
