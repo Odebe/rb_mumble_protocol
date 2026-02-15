@@ -45,14 +45,20 @@ impl CryptStateRef {
       args: &[Value],
     ) -> Result<(), Error> {
       let args = scan_args::<(), (), (), (), _, ()>(args)?;
-      let kwargs = get_kwargs::<_, (), (Option<[u8; 16]>, Option<[u8; 16]>, Option<[u8; 16]>), ()>(
+      let kwargs = get_kwargs::<_, (), (Option<RString>, Option<RString>, Option<RString>), ()>(
           args.keywords,
           &[],
           &["key", "encrypt_nonce", "decrypt_nonce"],
       )?;
 
       *rb_self.state.borrow_mut() = match kwargs.optional {
-          (Some(key), Some(enc), Some(dec)) => crypt_state::CryptState::new_from(key, enc, dec),
+          (Some(key), Some(enc), Some(dec)) => {
+            crypt_state::CryptState::new_from(
+              rstring_to_array::<{crypt_state::KEY_SIZE}>(ruby, &key)?,
+              rstring_to_array::<{crypt_state::BLOCK_SIZE}>(ruby, &enc)?,
+              rstring_to_array::<{crypt_state::BLOCK_SIZE}>(ruby, &dec)?,
+            )
+          },
           (None, None, None) => crypt_state::CryptState::generate_new(),
           _ => {
               return Err(Error::new(
@@ -65,11 +71,11 @@ impl CryptStateRef {
       Ok(())
     }
 
-    pub fn set_decrypt_nonce(ruby: &Ruby, rb_self: &Self, nonce: Vec<u8>) -> Result<(), Error> {
+    pub fn set_decrypt_nonce(ruby: &Ruby, rb_self: &Self, nonce: RString) -> Result<(), Error> {
         match rb_self.state.try_borrow_mut() {
             Ok(mut ref_) => {
-                match &nonce.clone().try_into() {
-                    Ok(array) => Ok(ref_.set_decrypt_nonce(array)),
+                match rstring_to_array::<{crypt_state::BLOCK_SIZE}>(ruby, &nonce) {
+                    Ok(array) => Ok(ref_.set_decrypt_nonce(&array)),
                     Err(_e) => {
                         let msg = format!("Expected a Decrypt nonce of length {}", 16);
                         let err = Error::new(ruby.get_inner(&BASE_ERROR), msg);
@@ -82,23 +88,38 @@ impl CryptStateRef {
         }
     }
 
-    pub fn key(ruby: &Ruby, rb_self: &Self) -> Result<Vec<u8>, Error> {
+    pub fn key(ruby: &Ruby, rb_self: &Self) -> Result<RString, Error> {
         match rb_self.state.try_borrow() {
-            Ok(ref_) => { Ok(ref_.get_key().to_vec()) },
+            Ok(ref_) => {
+              let key = ref_.get_key();
+              let ruby_string = ruby.str_from_slice(key);
+
+              Ok(ruby_string)
+            },
             Err(_e) => { Err(Error::new(ruby.get_inner(&BASE_ERROR), "borrow error")) }
         }
     }
 
-    pub fn encrypt_nonce(ruby: &Ruby, rb_self: &Self) -> Result<Vec<u8>, Error> {
+    pub fn encrypt_nonce(ruby: &Ruby, rb_self: &Self) -> Result<RString, Error> {
         match rb_self.state.try_borrow() {
-            Ok(ref_) => { Ok(ref_.get_encrypt_nonce().to_vec()) },
+            Ok(ref_) => {
+              let nonce = ref_.get_encrypt_nonce();
+              let ruby_string = ruby.str_from_slice(&nonce);
+
+              Ok(ruby_string)
+            },
             Err(_e) => { Err(Error::new(ruby.get_inner(&BASE_ERROR), "borrow error")) }
         }
     }
 
-    pub fn decrypt_nonce(ruby: &Ruby, rb_self: &Self) -> Result<Vec<u8>, Error> {
+    pub fn decrypt_nonce(ruby: &Ruby, rb_self: &Self) -> Result<RString, Error> {
         match rb_self.state.try_borrow() {
-            Ok(ref_) => { Ok(ref_.get_decrypt_nonce().to_vec()) },
+            Ok(ref_) => {
+              let nonce = ref_.get_decrypt_nonce();
+              let ruby_string = ruby.str_from_slice(&nonce);
+
+              Ok(ruby_string)
+            },
             Err(_e) => { Err(Error::new(ruby.get_inner(&BASE_ERROR), "borrow error")) }
         }
     }
@@ -160,6 +181,11 @@ impl CryptStateRef {
             Err(_e) => { Err(Error::new(ruby.get_inner(&BASE_ERROR), "borrow error")) }
         }
     }
+}
+
+fn rstring_to_array<const N: usize>(ruby: &Ruby, rstring: &RString) -> Result<[u8; N], Error> {
+  let slice = unsafe { rstring.as_slice() };
+  slice.try_into().map_err(|_| Error::new(ruby.get_inner(&BASE_ERROR), format!("Expected {N} bytes")))
 }
 
 #[magnus::init]

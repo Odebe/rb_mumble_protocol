@@ -44,6 +44,12 @@ RSpec.describe RbMumbleProtocol do
       end
     end
 
+    describe "#stats" do
+      it "returns correct stats" do
+        expect(server_state.stats).to(match(good: 0, late: 0, lost: 0))
+      end
+    end
+
     describe "#set_decrypt_nonce" do
       context "with correct nonce" do
         before do
@@ -57,7 +63,7 @@ RSpec.describe RbMumbleProtocol do
 
       context 'with incorrect nonce' do
         it 'raises error' do
-          expect { server_state.set_decrypt_nonce([1, 2, 3, 4]) }
+          expect { server_state.set_decrypt_nonce([1, 2, 3, 4].pack("C*")) }
             .to raise_error(RbMumbleProtocol::Error, "Expected a Decrypt nonce of length 16")
         end
       end
